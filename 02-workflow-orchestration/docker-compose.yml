@@ -1,0 +1,101 @@
+volumes:
+  postgres-kestra-data:
+    driver: local
+  kestra-data:
+    driver: local
+  postgres-ny-taxi-data:
+    driver: local
+
+networks:
+  kestra-network:
+
+services:
+  # PostgreSQL for Kestra
+  postgres:
+    image: postgres
+    volumes:
+      - postgres-kestra-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: kestra
+      POSTGRES_USER: kestra
+      POSTGRES_PASSWORD: k3str4
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+    networks:
+      - kestra-network
+
+  # Kestra service
+  kestra:
+    image: kestra/kestra:latest
+    pull_policy: always
+    user: "root"
+    command: server standalone
+    volumes:
+      - kestra-data:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/kestra-wd:/tmp/kestra-wd
+    environment:
+      KESTRA_CONFIGURATION: |
+        datasources:
+          postgres:
+            url: jdbc:postgresql://postgres:5432/kestra
+            driverClassName: org.postgresql.Driver
+            username: kestra
+            password: k3str4
+        kestra:
+          server:
+            basicAuth:
+              enabled: false
+              username: "admin@kestra.io"
+              password: kestra
+          repository:
+            type: postgres
+          storage:
+            type: local
+            local:
+              basePath: "/app/storage"
+          queue:
+            type: postgres
+          tasks:
+            tmpDir:
+              path: /tmp/kestra-wd/tmp
+          url: http://localhost:8082/
+    ports:
+      - "8082:8080" # Expose Kestra on port 8082
+      - "8083:8081" # Internal communication
+    depends_on:
+      postgres:
+        condition: service_started
+    networks:
+      - kestra-network
+
+  # PostgreSQL for ny_taxi data
+  pgdatabase:
+    image: postgres
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: ny_taxi
+    volumes:
+      - postgres-ny-taxi-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432" # Expose PostgreSQL on port 5433 to avoid conflict
+    networks:
+      - kestra-network
+
+  # pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: root
+    ports:
+      - "8080:80" # Expose pgAdmin on port 8080
+    depends_on:
+      - pgdatabase
+      - postgres
+    networks:
+      - kestra-network
